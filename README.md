@@ -233,3 +233,12 @@ for item in memory:
 
 Conceptual architecture.  
 Open for discussion and experimentation.
+
+## Possible Extensions
+
+This section outlines potential directions for further development and research.
+- Baseline recovery to prevent state drift (internal variables gradually return to default values)
+- Nonlinear modulation functions (e.g., sigmoid or softmax instead of linear scaling)
+- Fast-confidence gating for slow-pass activation (skip slow reasoning when confidence is high)
+- Slow-to-fast distillation (fast layer learns from slow decisions over time)
+- Stagnation detection and forced exploration (prevent behavioral collapse into repetitive actions)
