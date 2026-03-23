@@ -1,6 +1,6 @@
 # Unified Modulatory Architecture for Fast-Slow Decision Systems
 
-**Author:** Alexander Paseka (Пасека Александр Николаевич)  
+**Author:** Alexander Paseka
 **Year:** 2026  
 
 ---
