@@ -1,161 +1,185 @@
-import random
+import numpy as np
 import matplotlib.pyplot as plt
 
-random.seed(42)
-
-RUNS = 20
-STEPS = 100
+np.random.seed(42)
 
 
-def get_environment(step):
-    if step < 30:
-        return {"risk_prob": 0.2}
-    elif step < 60:
-        return {"risk_prob": 0.7}
-    else:
-        return {"risk_prob": 0.3}
+# --------------------------------------------------
+# Environment
+# --------------------------------------------------
+def generate_environment(steps=200):
+    t = np.arange(steps)
+
+    # Volatile environment with regime changes + noise
+    env_risk = 0.3 + 0.4 * (np.sin(t / 10) > 0).astype(float)
+    env_risk += np.random.normal(0, 0.05, steps)
+    env_risk = np.clip(env_risk, 0, 1)
+
+    return t, env_risk
 
 
-# ---------- BASELINES ----------
-def fsm_threshold(env):
-    return "RISKY" if env["risk_prob"] < 0.4 else "SAFE"
+# --------------------------------------------------
+# Agents
+# --------------------------------------------------
+def run_fsm(env_risk, threshold=0.4):
+    actions = []
+    rewards = []
+    total = 0
+    cumulative = []
+
+    for r in env_risk:
+        # 1 = SAFE, 0 = RISKY
+        action = 1 if r >= threshold else 0
+        actions.append(action)
+
+        if action == 1:  # SAFE
+            reward = 1
+        else:  # RISKY
+            reward = -12 if np.random.rand() < r else 6
+
+        rewards.append(reward)
+        total += reward
+        cumulative.append(total)
+
+    return np.array(actions), np.array(rewards), np.array(cumulative)
 
 
-def always_safe(_):
-    return "SAFE"
+def run_mda(env_risk):
+    actions = []
+    rewards = []
+    total = 0
+    cumulative = []
 
+    internal_fear = 0.3
+    fatigue = 0.0
+    reward_drive = 0.5
 
-def always_risky(_):
-    return "RISKY"
+    fear_hist = []
+    fatigue_hist = []
+    drive_hist = []
 
+    for r in env_risk:
+        safe_score = 1.0
+        risky_score = (
+            5.0
+            - (internal_fear * r * 12.0)
+            - (fatigue * 3.0)
+            + (reward_drive * 2.0)
+        )
 
-# ---------- MDA ----------
-def modulatory_agent(env, H):
-    safe_score = 1.0
-    risky_score = (
-        5.0
-        - (H["risk"] * env["risk_prob"] * 15.0)
-        - (H["fatigue"] * 4.0)
-        + (H["reward_drive"] * 2.0)
+        action = 0 if risky_score > safe_score else 1
+        actions.append(action)
+
+        if action == 1:  # SAFE
+            reward = 1
+            fatigue = max(0.0, fatigue - 0.05)
+            internal_fear = max(0.1, internal_fear - 0.02)
+            reward_drive = min(1.0, reward_drive + 0.01)
+        else:  # RISKY
+            reward = -12 if np.random.rand() < r else 6
+            fatigue = min(1.0, fatigue + 0.03)
+
+            if reward < 0:
+                internal_fear = min(1.0, internal_fear + 0.08)
+                reward_drive = max(0.0, reward_drive - 0.08)
+            else:
+                internal_fear = max(0.1, internal_fear - 0.01)
+                reward_drive = min(1.0, reward_drive + 0.03)
+
+        rewards.append(reward)
+        total += reward
+        cumulative.append(total)
+
+        fear_hist.append(internal_fear)
+        fatigue_hist.append(fatigue)
+        drive_hist.append(reward_drive)
+
+    return (
+        np.array(actions),
+        np.array(rewards),
+        np.array(cumulative),
+        np.array(fear_hist),
+        np.array(fatigue_hist),
+        np.array(drive_hist),
     )
-    return "RISKY" if risky_score > safe_score else "SAFE"
 
 
-def update_state(H, action, outcome):
-    if action == "SAFE":
-        H["fatigue"] = max(0.0, H["fatigue"] - 0.08)
-        H["risk"] = max(0.1, H["risk"] - 0.02)
-        H["reward_drive"] = min(1.0, H["reward_drive"] + 0.01)
-    else:
-        H["fatigue"] = min(1.0, H["fatigue"] + 0.05)
+# --------------------------------------------------
+# Simulation
+# --------------------------------------------------
+steps = 200
+t, env_risk = generate_environment(steps)
 
-    if action == "RISKY":
-        if outcome < 0:
-            H["risk"] = min(1.0, H["risk"] + 0.25)
-            H["reward_drive"] = max(0.0, H["reward_drive"] - 0.2)
-        else:
-            H["reward_drive"] = min(1.0, H["reward_drive"] + 0.05)
-            H["risk"] = max(0.1, H["risk"] - 0.01)
+fsm_actions, fsm_rewards, fsm_cum = run_fsm(env_risk)
+mda_actions, mda_rewards, mda_cum, fear_hist, fatigue_hist, drive_hist = run_mda(env_risk)
 
-    return H
+fsm_switches = np.sum(np.diff(fsm_actions) != 0)
+mda_switches = np.sum(np.diff(mda_actions) != 0)
 
+fsm_total = fsm_cum[-1]
+mda_total = mda_cum[-1]
 
-def get_outcome(action, prob):
-    if action == "SAFE":
-        return 1
-    return -15 if random.random() < prob else 7
+fsm_penalties = np.sum(fsm_rewards < 0)
+mda_penalties = np.sum(mda_rewards < 0)
 
 
-# ---------- STORAGE ----------
-avg_safe = [0] * STEPS
-avg_risky = [0] * STEPS
-avg_fsm = [0] * STEPS
-avg_mda = [0] * STEPS
+# --------------------------------------------------
+# Visualization
+# --------------------------------------------------
+fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
 
-sample_risk = []
-sample_fatigue = []
-
-
-# ---------- SIMULATION ----------
-for run in range(RUNS):
-    H = {"risk": 0.3, "fatigue": 0.0, "reward_drive": 0.5}
-
-    total_safe = 0
-    total_risky = 0
-    total_fsm = 0
-    total_mda = 0
-
-    for step in range(STEPS):
-        env = get_environment(step)
-
-        a_safe = always_safe(env)
-        a_risky = always_risky(env)
-        a_fsm = fsm_threshold(env)
-        a_mda = modulatory_agent(env, H)
-
-        r_safe = get_outcome(a_safe, env["risk_prob"])
-        r_risky = get_outcome(a_risky, env["risk_prob"])
-        r_fsm = get_outcome(a_fsm, env["risk_prob"])
-        r_mda = get_outcome(a_mda, env["risk_prob"])
-
-        total_safe += r_safe
-        total_risky += r_risky
-        total_fsm += r_fsm
-        total_mda += r_mda
-
-        H = update_state(H, a_mda, r_mda)
-
-        avg_safe[step] += total_safe
-        avg_risky[step] += total_risky
-        avg_fsm[step] += total_fsm
-        avg_mda[step] += total_mda
-
-        if run == 0:
-            sample_risk.append(H["risk"])
-            sample_fatigue.append(H["fatigue"])
-
-
-# ---------- AVERAGE ----------
-avg_safe = [x / RUNS for x in avg_safe]
-avg_risky = [x / RUNS for x in avg_risky]
-avg_fsm = [x / RUNS for x in avg_fsm]
-avg_mda = [x / RUNS for x in avg_mda]
-
-
-# ---------- ENV LINE ----------
-env_line = [get_environment(s)["risk_prob"] for s in range(STEPS)]
-
-
-# ---------- PLOT ----------
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-ax1.plot(avg_safe, label="Always SAFE", linestyle=":")
-ax1.plot(avg_risky, label="Always RISKY", linestyle=":")
-ax1.plot(avg_fsm, label="FSM Threshold", linestyle="--")
-ax1.plot(avg_mda, label="MDA", linewidth=2)
-
-ax1.set_title(f"Performance Comparison ({RUNS} runs)")
-ax1.set_ylabel("Total Reward")
+# 1. Environment
+ax1.plot(t, env_risk, alpha=0.7, label="Environment risk")
+ax1.axhline(0.4, linestyle="--", alpha=0.7, label="FSM threshold")
+ax1.set_title("Environment Dynamics")
+ax1.set_ylabel("Risk")
 ax1.legend()
-ax1.grid(alpha=0.2)
+ax1.grid(alpha=0.3)
 
-ax2.plot(sample_risk, label="Internal Risk", color="orange")
-ax2.plot(sample_fatigue, label="Fatigue", color="purple")
-ax2.fill_between(range(STEPS), env_line, color="grey", alpha=0.1, label="Env Risk")
-
-ax2.set_title("MDA Internal State (Sample Run)")
-ax2.set_xlabel("Step")
-ax2.set_ylabel("State")
+# 2. Actions
+ax2.step(t, fsm_actions, where="post", label=f"FSM actions (switches={fsm_switches})", linestyle="--")
+ax2.step(t, mda_actions, where="post", label=f"MDA actions (switches={mda_switches})", linewidth=2)
+ax2.set_title("Action Switching Comparison")
+ax2.set_ylabel("Action (1=SAFE, 0=RISKY)")
 ax2.legend()
-ax2.grid(alpha=0.2)
+ax2.grid(alpha=0.3)
+
+# 3. Cumulative reward
+ax3.plot(t, fsm_cum, label=f"FSM reward (final={fsm_total})", linestyle="--")
+ax3.plot(t, mda_cum, label=f"MDA reward (final={mda_total})", linewidth=2)
+ax3.set_title("Cumulative Reward")
+ax3.set_ylabel("Total reward")
+ax3.legend()
+ax3.grid(alpha=0.3)
+
+# 4. Internal state
+ax4.plot(t, fear_hist, label="Internal fear")
+ax4.plot(t, fatigue_hist, label="Fatigue")
+ax4.plot(t, drive_hist, label="Reward drive")
+ax4.fill_between(t, 0, env_risk, alpha=0.1, label="Environment risk")
+ax4.set_title("MDA Internal Modulators")
+ax4.set_xlabel("Steps")
+ax4.set_ylabel("State value")
+ax4.legend()
+ax4.grid(alpha=0.3)
+
+info_text = (
+    f"FSM total reward: {fsm_total}\n"
+    f"MDA total reward: {mda_total}\n"
+    f"FSM switches: {fsm_switches}\n"
+    f"MDA switches: {mda_switches}\n"
+    f"FSM penalties: {fsm_penalties}\n"
+    f"MDA penalties: {mda_penalties}"
+)
+
+fig.text(
+    0.78,
+    0.02,
+    info_text,
+    fontsize=10,
+    bbox=dict(facecolor="white", alpha=0.85)
+)
 
 plt.tight_layout()
+plt.savefig("mda_vs_fsm_comparison.png", dpi=300)
 plt.show()
-
-
-# ---------- RESULT ----------
-print("Final average reward:")
-print(f"SAFE:  {avg_safe[-1]:.1f}")
-print(f"RISKY: {avg_risky[-1]:.1f}")
-print(f"FSM:   {avg_fsm[-1]:.1f}")
-print(f"MDA:   {avg_mda[-1]:.1f}")
