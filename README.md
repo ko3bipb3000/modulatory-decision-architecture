@@ -153,3 +153,10 @@ Run learning demo:
 ```bash
 python learning_demo.py
 ```
+
+---
+
+## Performance Comparison: MDA vs FSM
+
+A standard Finite State Machine (FSM) relies on static thresholds, reacting directly to changes in the environment.  
+The Modulatory Decision Architecture (MDA) introduces internal state variables (
